@@ -62,6 +62,57 @@ python main.py fit -c configs_c2i/pix256std1_repa_pixnerd_xl.yaml
 ```
 For T2i, we use GenEval and DPG to collect metrics.
 
+### C2I Training with Visualization (main / newnerd)
+
+Both `main` and `newnerd` branches support the same training entry:
+
+```bash
+# training with visualization artifacts
+bash scripts/train_c2i_with_viz.sh fit configs_c2i/pix256std1_repa_pixnerd_xl.yaml
+
+# prediction with visualization artifacts
+bash scripts/train_c2i_with_viz.sh predict configs_c2i/pix256std1_repa_pixnerd_xl.yaml --ckpt_path=XXX.ckpt
+```
+
+Visualization outputs during `val/predict`:
+
+- Raw samples: `${trainer.default_root_dir}/val/...`
+- Preview grid PNG: `${trainer.default_root_dir}/val/.../val_preview_step*.png` or `predict_preview_step*.png`
+- Compressed NPZ (when `save_compressed=true`): `${trainer.default_root_dir}/val/.../output.npz`
+
+If your config uses `WandbLogger` or `TensorBoardLogger`, preview grids are also logged automatically.
+
+### C2I Training with W&B + 100-step Checkpoints
+
+We provide a ready-to-run config and scripts:
+
+- Config: `configs_c2i/pix256_c2i_wandb_100step.yaml`
+- Download quick-start dataset: `scripts/download_c2i_dataset.sh`
+- Train script: `scripts/train_c2i_wandb_100step.sh`
+
+```bash
+# 1) download dataset (Imagenette, ImageFolder format)
+bash scripts/download_c2i_dataset.sh
+
+# 2) set wandb key
+export WANDB_API_KEY=YOUR_WANDB_KEY
+
+# 3) set local DINOv2 weight path (required by REPATrainer)
+export DINO_WEIGHT_PATH=/path/to/facebookresearch_dinov2_main/dinov2_vitb14
+
+# 4) train (checkpoint every 100 steps + preview images)
+bash scripts/train_c2i_wandb_100step.sh fit datasets/imagenette2-320/train my-run pixnerd-c2i
+```
+
+Default behavior of `pix256_c2i_wandb_100step.yaml`:
+
+- `WandbLogger` enabled
+- checkpoint every 100 steps
+- validation every 100 steps
+- preview grid image generated and logged
+
+For full ImageNet-1K training, set your own `data.train_dataset.init_args.root` path in command line or config.
+
 ## Reference
 ```bibtex
 @article{2507.23268,
