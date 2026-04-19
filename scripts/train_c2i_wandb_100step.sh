@@ -62,9 +62,20 @@ if [[ -z "${DINO_PATH}" ]]; then
   exit 1
 fi
 
-if [[ ! -e "${DINO_PATH}" ]]; then
-  echo "[ERROR] DINO_PATH not found: ${DINO_PATH}"
+DINO_REPO_DIR="$(dirname "${DINO_PATH}")"
+DINO_HUB_ENTRY="$(basename "${DINO_PATH}")"
+if [[ ! -d "${DINO_REPO_DIR}" || ! -f "${DINO_REPO_DIR}/hubconf.py" ]]; then
+  echo "[ERROR] Invalid DINO_PATH: ${DINO_PATH}"
+  echo "        Expected format: /path/to/facebookresearch_dinov2_main/dinov2_vitb14"
+  echo "        The repo directory must exist and contain hubconf.py:"
+  echo "        ${DINO_REPO_DIR}/hubconf.py"
   exit 1
+fi
+
+if [[ ! -e "${DINO_PATH}" ]]; then
+  echo "[WARN] DINO hub entry path does not exist on disk: ${DINO_PATH}"
+  echo "       Continuing because the parent repo looks valid."
+  echo "       torch.hub will load entry: ${DINO_HUB_ENTRY}"
 fi
 
 echo "[INFO] Branch: $(git rev-parse --abbrev-ref HEAD)"
@@ -72,6 +83,7 @@ echo "[INFO] Mode: ${MODE}"
 echo "[INFO] Config: ${CONFIG}"
 echo "[INFO] Data root: ${DATA_ROOT}"
 echo "[INFO] DINO path: ${DINO_PATH}"
+echo "[INFO] DINO repo/entry: ${DINO_REPO_DIR} / ${DINO_HUB_ENTRY}"
 echo "[INFO] Wandb project/run: ${PROJECT}/${RUN_NAME}"
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   echo "[INFO] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
