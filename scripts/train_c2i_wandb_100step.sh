@@ -6,6 +6,7 @@ set -euo pipefail
 #   bash scripts/train_c2i_wandb_100step.sh fit
 #   bash scripts/train_c2i_wandb_100step.sh fit datasets/imagenette2-320/train my-run pixnerd-c2i
 #   CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_c2i_wandb_100step.sh fit
+#   bash scripts/train_c2i_wandb_100step.sh fit ... --ckpt_dir /path/to/checkpoints
 #
 # Args:
 #   $1 MODE        : fit | predict (default: fit)
@@ -15,6 +16,7 @@ set -euo pipefail
 #   $5 CONFIG      : config path (default: configs_c2i/pix256_c2i_wandb_100step.yaml)
 #   $6 DINO_PATH   : optional local torch.hub DINOv2 path; if omitted, use $DINO_WEIGHT_PATH
 #   $7... EXTRA    : extra LightningCLI overrides
+#                    script-specific option: --ckpt_dir <path> or --ckpt-dir <path>
 
 MODE="${1:-fit}"
 if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
@@ -35,7 +37,29 @@ fi
 for ((i=0; i<SHIFT_N && $#>0; i++)); do
   shift
 done
-EXTRA_ARGS=("$@")
+
+CKPT_DIR="${PIXNERD_CKPT_DIR:-}"
+EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --ckpt_dir|--ckpt-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "[ERROR] $1 requires a path argument"
+        exit 1
+      fi
+      CKPT_DIR="$2"
+      shift 2
+      ;;
+    --ckpt_dir=*|--ckpt-dir=*)
+      CKPT_DIR="${1#*=}"
+      shift 1
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift 1
+      ;;
+  esac
+done
 
 has_tags_exp_override=false
 for arg in "${EXTRA_ARGS[@]}"; do
@@ -73,9 +97,20 @@ if [[ -z "${DINO_PATH}" ]]; then
   exit 1
 fi
 
-if [[ ! -e "${DINO_PATH}" ]]; then
-  echo "[ERROR] DINO_PATH not found: ${DINO_PATH}"
+DINO_REPO_DIR="$(dirname "${DINO_PATH}")"
+DINO_HUB_ENTRY="$(basename "${DINO_PATH}")"
+if [[ ! -d "${DINO_REPO_DIR}" || ! -f "${DINO_REPO_DIR}/hubconf.py" ]]; then
+  echo "[ERROR] Invalid DINO_PATH: ${DINO_PATH}"
+  echo "        Expected format: /path/to/facebookresearch_dinov2_main/dinov2_vitb14"
+  echo "        The repo directory must exist and contain hubconf.py:"
+  echo "        ${DINO_REPO_DIR}/hubconf.py"
   exit 1
+fi
+
+if [[ ! -e "${DINO_PATH}" ]]; then
+  echo "[WARN] DINO hub entry path does not exist on disk: ${DINO_PATH}"
+  echo "       Continuing because the parent repo looks valid."
+  echo "       torch.hub will load entry: ${DINO_HUB_ENTRY}"
 fi
 
 echo "[INFO] Branch: $(git rev-parse --abbrev-ref HEAD)"
@@ -83,13 +118,21 @@ echo "[INFO] Mode: ${MODE}"
 echo "[INFO] Config: ${CONFIG}"
 echo "[INFO] Data root: ${DATA_ROOT}"
 echo "[INFO] DINO path: ${DINO_PATH}"
+echo "[INFO] DINO repo/entry: ${DINO_REPO_DIR} / ${DINO_HUB_ENTRY}"
 echo "[INFO] Wandb project/run: ${PROJECT}/${RUN_NAME}"
 TAG_EXP_SANITIZED="$(echo "${RUN_NAME}" | sed 's#[/: ]#_#g')"
 echo "[INFO] tags.exp: ${TAG_EXP_SANITIZED}"
+if [[ -n "${CKPT_DIR}" ]]; then
+  echo "[INFO] Checkpoint dir: ${CKPT_DIR}"
+fi
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   echo "[INFO] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 fi
 echo "[INFO] Extra args: ${EXTRA_ARGS[*]:-(none)}"
+
+if [[ -n "${CKPT_DIR}" ]]; then
+  export PIXNERD_CKPT_DIR="${CKPT_DIR}"
+fi
 
 cmd=(
   python main.py "${MODE}" -c "${CONFIG}"

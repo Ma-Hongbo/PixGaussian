@@ -1,0 +1,8 @@
+/datasets
+/third_party/facebookresearch_dinov2_main
+/wandb
+/workdirs
+/config.yaml
+/tea_debug.log
+__pycache__/
+*.pyc
