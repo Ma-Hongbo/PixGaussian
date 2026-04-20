@@ -6,7 +6,7 @@ set -euo pipefail
 #   bash scripts/train_c2i_wandb_100step.sh fit
 #   bash scripts/train_c2i_wandb_100step.sh fit datasets/imagenette2-320/train my-run pixnerd-c2i
 #   CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_c2i_wandb_100step.sh fit
-#   bash scripts/train_c2i_wandb_100step.sh fit ... --ckpt_dir /path/to/checkpoints
+#   bash scripts/train_c2i_wandb_100step.sh fit ... --save_ckpt /path/to/checkpoints
 #
 # Args:
 #   $1 MODE        : fit | predict (default: fit)
@@ -16,7 +16,9 @@ set -euo pipefail
 #   $5 CONFIG      : config path (default: configs_c2i/pix256_c2i_wandb_100step.yaml)
 #   $6 DINO_PATH   : optional local torch.hub DINOv2 path; if omitted, use $DINO_WEIGHT_PATH
 #   $7... EXTRA    : extra LightningCLI overrides
-#                    script-specific option: --ckpt_dir <path> or --ckpt-dir <path>
+#                    script-specific option:
+#                    --save_ckpt <path> | --save-ckpt <path>
+#                    --ckpt_dir <path>  | --ckpt-dir <path>
 
 MODE="${1:-fit}"
 if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
@@ -42,7 +44,7 @@ CKPT_DIR="${PIXNERD_CKPT_DIR:-}"
 EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ckpt_dir|--ckpt-dir)
+    --save_ckpt|--save-ckpt|--ckpt_dir|--ckpt-dir)
       if [[ $# -lt 2 ]]; then
         echo "[ERROR] $1 requires a path argument"
         exit 1
@@ -50,7 +52,7 @@ while [[ $# -gt 0 ]]; do
       CKPT_DIR="$2"
       shift 2
       ;;
-    --ckpt_dir=*|--ckpt-dir=*)
+    --save_ckpt=*|--save-ckpt=*|--ckpt_dir=*|--ckpt-dir=*)
       CKPT_DIR="${1#*=}"
       shift 1
       ;;
