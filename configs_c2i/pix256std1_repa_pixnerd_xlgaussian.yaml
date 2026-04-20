@@ -1,7 +1,7 @@
 # lightning.pytorch==2.4.0
 seed_everything: true
 tags:
-  exp: &exp pix256std1_repa_flatten_condit22_fixbug_gztdct_normallnerf2_fixt_large
+  exp: &exp pix256std1_repa_xlgaussian_cond26_depth6_cap8_shared3_xl
 torch_hub_dir: /mnt/bn/wangshuai6/torch_hub
 huggingface_cache_dir: null
 trainer:
@@ -47,14 +47,14 @@ model:
         in_channels: 3
         patch_size: 16
         num_groups: 16
-        hidden_size: &hidden_dim 1024
+        hidden_size: &hidden_dim 1152
         hidden_size_x: 64
-        num_blocks: 24
-        num_cond_blocks: 22
+        num_blocks: 32
+        num_cond_blocks: 26
         nerf_mlpratio: 2
         condition_size: *hidden_dim
-        decoder_capacity_factor: 4
-        shared_point_depth: 2
+        decoder_capacity_factor: 8
+        shared_point_depth: 3
         num_classes: &num_classes 1000
   conditioner:
     class_path: src.models.conditioner.class_label.LabelConditioner

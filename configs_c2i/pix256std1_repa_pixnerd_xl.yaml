@@ -52,6 +52,9 @@ model:
         num_blocks: 30
         num_cond_blocks: 26
         nerf_mlpratio: 2
+        condition_size: *hidden_dim
+        decoder_capacity_factor: 4
+        shared_point_depth: 2
         num_classes: &num_classes 1000
   conditioner:
     class_path: src.models.conditioner.class_label.LabelConditioner

@@ -11,6 +11,11 @@ from torch.nn.functional import scaled_dot_product_attention
 def modulate(x, shift, scale):
     return x * (1 + scale) + shift
 
+
+def normalized_linear(x, linear):
+    weight = torch.nn.functional.normalize(linear.weight, dim=-1)
+    return torch.nn.functional.linear(x, weight, linear.bias)
+
 class Embed(nn.Module):
     def __init__(
             self,
@@ -249,67 +254,78 @@ class NerfEmbedder(nn.Module):
 
 
 class SharedPointEncoder(nn.Module):
-    def __init__(self, hidden_size_x, mlp_ratio=2):
+    def __init__(self, hidden_size_x, hidden_size_inner):
         super().__init__()
-        self.norm = RMSNorm(hidden_size_x, eps=1e-6)
-        hidden = int(hidden_size_x * mlp_ratio)
-        self.fc1 = nn.Linear(hidden_size_x, hidden, bias=True)
-        self.fc2 = nn.Linear(hidden, hidden_size_x, bias=True)
+        self.input_norm = RMSNorm(hidden_size_x, eps=1e-6)
+        self.output_norm = RMSNorm(hidden_size_x, eps=1e-6)
+        self.fc1 = nn.Linear(hidden_size_x, hidden_size_inner, bias=True)
+        self.fc2 = nn.Linear(hidden_size_inner, hidden_size_x, bias=True)
 
     def forward(self, x):
         res_x = x
-        x = self.norm(x)
-        x = self.fc1(x)
+        x = self.input_norm(x)
+        x = normalized_linear(x, self.fc1)
         x = torch.nn.functional.silu(x)
-        x = self.fc2(x)
-        return x + res_x
+        x = normalized_linear(x, self.fc2)
+        x = self.output_norm(x)
+        return res_x + x
 
 
 class PatchConditionHead(nn.Module):
     def __init__(self, hidden_size_s, condition_size):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(hidden_size_s, condition_size, bias=True),
-            nn.SiLU(),
-            nn.Linear(condition_size, condition_size, bias=True),
-        )
+        self.input_norm = RMSNorm(hidden_size_s, eps=1e-6)
+        self.hidden_norm = RMSNorm(condition_size, eps=1e-6)
+        self.output_norm = RMSNorm(condition_size, eps=1e-6)
+        self.fc1 = nn.Linear(hidden_size_s, condition_size, bias=True)
+        self.fc2 = nn.Linear(condition_size, condition_size, bias=True)
 
     def forward(self, s):
-        return self.net(s)
+        s = self.input_norm(s)
+        s = self.fc1(s)
+        s = torch.nn.functional.silu(s)
+        s = self.hidden_norm(s)
+        s = self.fc2(s)
+        return self.output_norm(s)
 
 
 class ConditionedPointEncoder(nn.Module):
-    def __init__(self, hidden_size_x, condition_size, mlp_ratio=2):
+    def __init__(self, hidden_size_x, condition_size, hidden_size_inner):
         super().__init__()
-        self.norm = RMSNorm(hidden_size_x, eps=1e-6)
-        hidden = int(hidden_size_x * mlp_ratio)
-        self.fc1 = nn.Linear(hidden_size_x, hidden, bias=True)
-        self.fc2 = nn.Linear(hidden, hidden_size_x, bias=True)
+        self.condition_norm = RMSNorm(condition_size, eps=1e-6)
+        self.point_norm = RMSNorm(hidden_size_x, eps=1e-6)
+        self.output_norm = RMSNorm(hidden_size_x, eps=1e-6)
+        self.fc1 = nn.Linear(hidden_size_x, hidden_size_inner, bias=True)
+        self.fc2 = nn.Linear(hidden_size_inner, hidden_size_x, bias=True)
         self.cond_proj = nn.Linear(condition_size, 3 * hidden_size_x, bias=True)
 
     def forward(self, x, condition):
+        condition = self.condition_norm(condition)
         shift, scale, gate = self.cond_proj(condition).chunk(3, dim=-1)
         shift = shift[:, None, :]
-        scale = scale[:, None, :]
-        gate = gate[:, None, :]
+        scale = torch.tanh(scale)[:, None, :]
+        gate = torch.tanh(gate)[:, None, :]
         res_x = x
-        x = modulate(self.norm(x), shift, scale)
-        x = self.fc1(x)
+        x = modulate(self.point_norm(x), shift, scale)
+        x = normalized_linear(x, self.fc1)
         x = torch.nn.functional.silu(x)
-        x = self.fc2(x)
+        x = normalized_linear(x, self.fc2)
+        x = self.output_norm(x)
         return res_x + gate * x
 
 
 class ConditionedQueryHead(nn.Module):
     def __init__(self, hidden_size_x, out_channels, condition_size):
         super().__init__()
-        self.norm = RMSNorm(hidden_size_x, eps=1e-6)
+        self.condition_norm = RMSNorm(condition_size, eps=1e-6)
+        self.point_norm = RMSNorm(hidden_size_x, eps=1e-6)
         self.cond_proj = nn.Linear(condition_size, 2 * hidden_size_x, bias=True)
         self.linear = nn.Linear(hidden_size_x, out_channels, bias=True)
 
     def forward(self, x, condition):
+        condition = self.condition_norm(condition)
         shift, scale = self.cond_proj(condition).chunk(2, dim=-1)
-        x = modulate(self.norm(x), shift[:, None, :], scale[:, None, :])
+        x = modulate(self.point_norm(x), shift[:, None, :], torch.tanh(scale)[:, None, :])
         return self.linear(x)
 
 class PixNerDiT(nn.Module):
@@ -320,6 +336,9 @@ class PixNerDiT(nn.Module):
             hidden_size=1152,
             hidden_size_x=64,
             nerf_mlpratio=4,
+            condition_size=None,
+            decoder_capacity_factor=4,
+            shared_point_depth=2,
             num_blocks=18,
             num_cond_blocks=4,
             patch_size=2,
@@ -340,15 +359,21 @@ class PixNerDiT(nn.Module):
         self.num_cond_blocks = num_cond_blocks
         self.num_decoder_blocks = self.num_blocks - self.num_cond_blocks
         self.patch_size = patch_size
+        self.condition_size = hidden_size if condition_size is None else condition_size
+        self.decoder_capacity_factor = decoder_capacity_factor
+        self.shared_point_depth = shared_point_depth
+        self.point_hidden_size = int(hidden_size_x * nerf_mlpratio * decoder_capacity_factor)
         self.x_embedder = NerfEmbedder(in_channels, hidden_size_x, max_freqs=8)
         self.s_embedder = Embed(in_channels*patch_size**2, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         self.y_embedder = LabelEmbedder(num_classes+1, hidden_size)
-        self.condition_size = hidden_size_x
         self.patch_condition_head = PatchConditionHead(self.hidden_size, self.condition_size)
-        self.shared_point_encoder = SharedPointEncoder(hidden_size_x, nerf_mlpratio)
+        self.shared_point_blocks = nn.ModuleList([
+            SharedPointEncoder(hidden_size_x, self.point_hidden_size)
+            for _ in range(self.shared_point_depth)
+        ])
         self.decoder_blocks = nn.ModuleList([
-            ConditionedPointEncoder(hidden_size_x, self.condition_size, nerf_mlpratio)
+            ConditionedPointEncoder(hidden_size_x, self.condition_size, self.point_hidden_size)
             for _ in range(self.num_decoder_blocks)
         ])
         self.final_layer = ConditionedQueryHead(hidden_size_x, self.out_channels, self.condition_size)
@@ -386,6 +411,11 @@ class PixNerDiT(nn.Module):
         # zero init final layer
         nn.init.zeros_(self.final_layer.linear.weight)
         nn.init.zeros_(self.final_layer.linear.bias)
+        nn.init.zeros_(self.final_layer.cond_proj.weight)
+        nn.init.zeros_(self.final_layer.cond_proj.bias)
+        for block in self.decoder_blocks:
+            nn.init.zeros_(block.cond_proj.weight)
+            nn.init.zeros_(block.cond_proj.bias)
 
 
     def forward(self, x, t, y, s=None, mask=None):
@@ -407,7 +437,8 @@ class PixNerDiT(nn.Module):
         s = s.view(batch_size*length, self.hidden_size)
         condition = self.patch_condition_head(s)
         x = self.x_embedder(x)
-        x = self.shared_point_encoder(x)
+        for block in self.shared_point_blocks:
+            x = block(x)
         for block in self.decoder_blocks:
             x = block(x, condition)
         x = self.final_layer(x, condition)
