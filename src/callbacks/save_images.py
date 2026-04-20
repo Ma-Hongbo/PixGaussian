@@ -2,6 +2,7 @@ import lightning.pytorch as pl
 from lightning.pytorch import Callback
 
 
+import os
 import os.path
 import numpy
 import torch
@@ -29,6 +30,9 @@ class SaveImagesHook(Callback):
         self.log_preview = log_preview
         self.preview_max_images = preview_max_images
         self.preview_ncols = preview_ncols
+
+    def _resolve_output_root(self, trainer: "pl.Trainer") -> str:
+        return os.environ.get("PIXNERD_CKPT_DIR") or trainer.default_root_dir
 
     def save_start(self, target_dir):
         self.samples = []
@@ -125,7 +129,7 @@ class SaveImagesHook(Callback):
         self.samples = []
 
     def on_validation_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        target_dir = os.path.join(trainer.default_root_dir, self.save_dir, f"iter_{trainer.global_step}")
+        target_dir = os.path.join(self._resolve_output_root(trainer), self.save_dir, f"iter_{trainer.global_step}")
         self.save_start(target_dir)
 
     def on_validation_batch_end(
@@ -143,7 +147,7 @@ class SaveImagesHook(Callback):
         self.save_end(trainer=trainer, stage="val")
 
     def on_predict_epoch_start(self, trainer: "pl.Trainer", pl_module: "pl.LightningModule") -> None:
-        target_dir = os.path.join(trainer.default_root_dir, self.save_dir, "predict")
+        target_dir = os.path.join(self._resolve_output_root(trainer), self.save_dir, "predict")
         self.save_start(target_dir)
 
     def on_predict_batch_end(
