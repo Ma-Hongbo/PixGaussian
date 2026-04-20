@@ -25,6 +25,7 @@ cd "${REPO_ROOT}"
 #                    --save_ckpt <path> | --save-ckpt <path>
 #                    --ckpt_dir <path>  | --ckpt-dir <path>
 #                    --save_every_steps <int> | --save-every-steps <int> (default: 3000)
+#                    --val_every_steps <int>  | --val-every-steps <int> (default: 500)
 
 MODE="${1:-fit}"
 if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
@@ -49,6 +50,7 @@ done
 
 CKPT_DIR="${PIXNERD_CKPT_DIR:-}"
 SAVE_EVERY_STEPS="${PIXNERD_SAVE_EVERY_N_TRAIN_STEPS:-3000}"
+VAL_EVERY_STEPS="${PIXNERD_VAL_CHECK_INTERVAL:-500}"
 EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -76,6 +78,18 @@ while [[ $# -gt 0 ]]; do
       SAVE_EVERY_STEPS="${1#*=}"
       shift 1
       ;;
+    --val_every_steps|--val-every-steps)
+      if [[ $# -lt 2 ]]; then
+        echo "[ERROR] $1 requires an integer argument"
+        exit 1
+      fi
+      VAL_EVERY_STEPS="$2"
+      shift 2
+      ;;
+    --val_every_steps=*|--val-every-steps=*)
+      VAL_EVERY_STEPS="${1#*=}"
+      shift 1
+      ;;
     *)
       EXTRA_ARGS+=("$1")
       shift 1
@@ -95,6 +109,11 @@ fi
 
 if ! [[ "${SAVE_EVERY_STEPS}" =~ ^[0-9]+$ ]] || [[ "${SAVE_EVERY_STEPS}" -lt 1 ]]; then
   echo "[ERROR] save_every_steps must be an integer >= 1, got: ${SAVE_EVERY_STEPS}"
+  exit 1
+fi
+
+if ! [[ "${VAL_EVERY_STEPS}" =~ ^[0-9]+$ ]] || [[ "${VAL_EVERY_STEPS}" -lt 1 ]]; then
+  echo "[ERROR] val_every_steps must be an integer >= 1, got: ${VAL_EVERY_STEPS}"
   exit 1
 fi
 
@@ -146,6 +165,14 @@ for arg in "${EXTRA_ARGS[@]}"; do
   fi
 done
 
+has_val_check_interval_override=false
+for arg in "${EXTRA_ARGS[@]}"; do
+  if [[ "${arg}" == "--trainer.val_check_interval" || "${arg}" == --trainer.val_check_interval=* ]]; then
+    has_val_check_interval_override=true
+    break
+  fi
+done
+
 if [[ "${supports_tags_exp}" == "false" && "${has_tags_exp_override}" == "true" ]]; then
   FILTERED_EXTRA_ARGS=()
   skip_next=false
@@ -181,6 +208,7 @@ echo "[INFO] Config: ${CONFIG}"
 echo "[INFO] Data root: ${DATA_ROOT}"
 echo "[INFO] Wandb project/run: ${PROJECT}/${RUN_NAME}"
 echo "[INFO] Save checkpoint every ${SAVE_EVERY_STEPS} train steps"
+echo "[INFO] Run validation every ${VAL_EVERY_STEPS} train steps"
 if [[ -n "${DINO_PATH}" ]]; then
   echo "[INFO] DINO path: ${DINO_PATH}"
 fi
@@ -189,6 +217,7 @@ if [[ "${supports_tags_exp}" == "true" ]]; then
 fi
 if [[ -n "${CKPT_DIR}" ]]; then
   echo "[INFO] Checkpoint dir: ${CKPT_DIR}"
+  echo "[INFO] last.ckpt path: ${CKPT_DIR%/}/last.ckpt"
 fi
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   echo "[INFO] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
@@ -200,6 +229,7 @@ if [[ -n "${CKPT_DIR}" ]]; then
   export PIXNERD_CKPT_DIR="${CKPT_DIR}"
 fi
 export PIXNERD_SAVE_EVERY_N_TRAIN_STEPS="${SAVE_EVERY_STEPS}"
+export PIXNERD_VAL_CHECK_INTERVAL="${VAL_EVERY_STEPS}"
 
 cmd=(
   python main.py "${MODE}" -c "${CONFIG}"
@@ -210,6 +240,10 @@ cmd=(
 
 if [[ ${#DINO_ARGS[@]} -gt 0 ]]; then
   cmd+=("${DINO_ARGS[@]}")
+fi
+
+if [[ "${MODE}" == "fit" && "${has_val_check_interval_override}" == "false" ]]; then
+  cmd+=(--trainer.val_check_interval "${VAL_EVERY_STEPS}")
 fi
 
 if [[ "${supports_tags_exp}" == "true" && "${has_tags_exp_override}" == "false" ]]; then
