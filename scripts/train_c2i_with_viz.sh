@@ -5,13 +5,35 @@ set -euo pipefail
 #   bash scripts/train_c2i_with_viz.sh fit
 #   bash scripts/train_c2i_with_viz.sh fit configs_c2i/pix256std1_repa_pixnerd_xl.yaml
 #   bash scripts/train_c2i_with_viz.sh predict configs_c2i/pix256std1_repa_pixnerd_xl.yaml --ckpt_path /path/to/model.ckpt
+#   bash scripts/train_c2i_with_viz.sh fit configs_c2i/pix256std1_repa_pixnerd_xl.yaml --save_ckpt /path/to/checkpoints
 #   CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_c2i_with_viz.sh fit
 
 MODE="${1:-fit}"
 CONFIG="${2:-configs_c2i/pix256std1_repa_pixnerd_xl.yaml}"
 shift $(( $# > 0 ? 1 : 0 ))
 shift $(( $# > 0 ? 1 : 0 ))
-EXTRA_ARGS=("$@")
+CKPT_DIR="${PIXNERD_CKPT_DIR:-}"
+EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --save_ckpt|--save-ckpt|--ckpt_dir|--ckpt-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "[ERROR] $1 requires a path argument"
+        exit 1
+      fi
+      CKPT_DIR="$2"
+      shift 2
+      ;;
+    --save_ckpt=*|--save-ckpt=*|--ckpt_dir=*|--ckpt-dir=*)
+      CKPT_DIR="${1#*=}"
+      shift 1
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift 1
+      ;;
+  esac
+done
 
 if [[ "${MODE}" != "fit" && "${MODE}" != "predict" ]]; then
   echo "[ERROR] MODE must be fit or predict, got: ${MODE}"
@@ -27,10 +49,17 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 echo "[INFO] Branch: ${BRANCH}"
 echo "[INFO] Mode: ${MODE}"
 echo "[INFO] Config: ${CONFIG}"
+if [[ -n "${CKPT_DIR}" ]]; then
+  echo "[INFO] Checkpoint dir: ${CKPT_DIR}"
+fi
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   echo "[INFO] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 fi
 echo "[INFO] Extra args: ${EXTRA_ARGS[*]:-(none)}"
+
+if [[ -n "${CKPT_DIR}" ]]; then
+  export PIXNERD_CKPT_DIR="${CKPT_DIR}"
+fi
 
 cmd=(python main.py "${MODE}" -c "${CONFIG}")
 if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
@@ -39,4 +68,3 @@ fi
 
 echo "[INFO] Running: ${cmd[*]}"
 "${cmd[@]}"
-

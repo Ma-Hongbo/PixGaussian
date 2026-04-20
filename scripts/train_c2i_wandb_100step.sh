@@ -6,6 +6,7 @@ set -euo pipefail
 #   bash scripts/train_c2i_wandb_100step.sh fit
 #   bash scripts/train_c2i_wandb_100step.sh fit datasets/imagenette2-320/train my-run pixnerd-c2i
 #   CUDA_VISIBLE_DEVICES=0,1 bash scripts/train_c2i_wandb_100step.sh fit
+#   bash scripts/train_c2i_wandb_100step.sh fit ... --save_ckpt /path/to/checkpoints
 #
 # Args:
 #   $1 MODE        : fit | predict (default: fit)
@@ -13,8 +14,11 @@ set -euo pipefail
 #   $3 RUN_NAME    : wandb run name (default: c2i-<timestamp>)
 #   $4 PROJECT     : wandb project (default: pixnerd-c2i)
 #   $5 CONFIG      : config path (default: configs_c2i/pix256_c2i_wandb_100step.yaml)
-#   $6 DINO_PATH   : local torch.hub DINOv2 path (default: $DINO_WEIGHT_PATH)
+#   $6 DINO_PATH   : optional local torch.hub DINOv2 path; if omitted, use $DINO_WEIGHT_PATH
 #   $7... EXTRA    : extra LightningCLI overrides
+#                    script-specific option:
+#                    --save_ckpt <path> | --save-ckpt <path>
+#                    --ckpt_dir <path>  | --ckpt-dir <path>
 
 MODE="${1:-fit}"
 if [[ "${MODE}" == "-h" || "${MODE}" == "--help" ]]; then
@@ -25,14 +29,39 @@ DATA_ROOT="${2:-datasets/imagenette2-320/train}"
 RUN_NAME="${3:-c2i-$(date +%y%m%d-%H%M%S)}"
 PROJECT="${4:-pixnerd-c2i}"
 CONFIG="${5:-configs_c2i/pix256_c2i_wandb_100step.yaml}"
-DINO_PATH="${6:-${DINO_WEIGHT_PATH:-}}"
-shift $(( $# > 0 ? 1 : 0 ))
-shift $(( $# > 0 ? 1 : 0 ))
-shift $(( $# > 0 ? 1 : 0 ))
-shift $(( $# > 0 ? 1 : 0 ))
-shift $(( $# > 0 ? 1 : 0 ))
-shift $(( $# > 0 ? 1 : 0 ))
-EXTRA_ARGS=("$@")
+RAW_ARG6="${6:-}"
+DINO_PATH="${DINO_WEIGHT_PATH:-}"
+SHIFT_N=5
+if [[ -n "${RAW_ARG6}" && "${RAW_ARG6}" != --* ]]; then
+  DINO_PATH="${RAW_ARG6}"
+  SHIFT_N=6
+fi
+for ((i=0; i<SHIFT_N && $#>0; i++)); do
+  shift
+done
+
+CKPT_DIR="${PIXNERD_CKPT_DIR:-}"
+EXTRA_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --save_ckpt|--save-ckpt|--ckpt_dir|--ckpt-dir)
+      if [[ $# -lt 2 ]]; then
+        echo "[ERROR] $1 requires a path argument"
+        exit 1
+      fi
+      CKPT_DIR="$2"
+      shift 2
+      ;;
+    --save_ckpt=*|--save-ckpt=*|--ckpt_dir=*|--ckpt-dir=*)
+      CKPT_DIR="${1#*=}"
+      shift 1
+      ;;
+    *)
+      EXTRA_ARGS+=("$1")
+      shift 1
+      ;;
+  esac
+done
 
 if [[ "${MODE}" != "fit" && "${MODE}" != "predict" ]]; then
   echo "[ERROR] MODE must be fit or predict, got: ${MODE}"
@@ -85,10 +114,17 @@ echo "[INFO] Data root: ${DATA_ROOT}"
 echo "[INFO] DINO path: ${DINO_PATH}"
 echo "[INFO] DINO repo/entry: ${DINO_REPO_DIR} / ${DINO_HUB_ENTRY}"
 echo "[INFO] Wandb project/run: ${PROJECT}/${RUN_NAME}"
+if [[ -n "${CKPT_DIR}" ]]; then
+  echo "[INFO] Checkpoint dir: ${CKPT_DIR}"
+fi
 if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
   echo "[INFO] CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
 fi
 echo "[INFO] Extra args: ${EXTRA_ARGS[*]:-(none)}"
+
+if [[ -n "${CKPT_DIR}" ]]; then
+  export PIXNERD_CKPT_DIR="${CKPT_DIR}"
+fi
 
 cmd=(
   python main.py "${MODE}" -c "${CONFIG}"
